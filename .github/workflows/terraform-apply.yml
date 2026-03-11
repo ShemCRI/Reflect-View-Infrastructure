@@ -1,0 +1,192 @@
+name: Terraform Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: "Stack to apply"
+        required: true
+        type: choice
+        options:
+          - shared-data
+          - prod1-compute
+          - prod1-rds
+          - prod1-alb
+          - all
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_VERSION: "1.12.2"
+  AWS_REGION: "us-east-1"
+
+jobs:
+  # ---------- shared-data ----------
+  apply-shared-data:
+    name: "Apply: shared-data"
+    if: ${{ inputs.stack == 'shared-data' || inputs.stack == 'all' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: live/cri-ct-rv-shared/data
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure Terraform registry token
+        run: |
+          cat > ~/.terraformrc <<EOF
+          credentials "code.logicworks.net" {
+            token = "${{ secrets.TF_TOKEN_CODE_LOGICWORKS_NET }}"
+          }
+          EOF
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+
+  # ---------- prod1-compute ----------
+  apply-prod1-compute:
+    name: "Apply: prod1-compute"
+    needs: [apply-shared-data]
+    if: |-
+      always()
+      && !failure()
+      && (inputs.stack == 'prod1-compute' || inputs.stack == 'all')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: live/cri-ct-rv-prod1/compute
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure Terraform registry token
+        run: |
+          cat > ~/.terraformrc <<EOF
+          credentials "code.logicworks.net" {
+            token = "${{ secrets.TF_TOKEN_CODE_LOGICWORKS_NET }}"
+          }
+          EOF
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+
+  # ---------- prod1-rds ----------
+  apply-prod1-rds:
+    name: "Apply: prod1-rds"
+    needs: [apply-prod1-compute]
+    if: |-
+      always()
+      && !failure()
+      && (inputs.stack == 'prod1-rds' || inputs.stack == 'all')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: live/cri-ct-rv-prod1/rds
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure Terraform registry token
+        run: |
+          cat > ~/.terraformrc <<EOF
+          credentials "code.logicworks.net" {
+            token = "${{ secrets.TF_TOKEN_CODE_LOGICWORKS_NET }}"
+          }
+          EOF
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+
+  # ---------- prod1-alb ----------
+  apply-prod1-alb:
+    name: "Apply: prod1-alb"
+    needs: [apply-prod1-rds]
+    if: |-
+      always()
+      && !failure()
+      && (inputs.stack == 'prod1-alb' || inputs.stack == 'all')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: live/cri-ct-rv-prod1/alb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure Terraform registry token
+        run: |
+          cat > ~/.terraformrc <<EOF
+          credentials "code.logicworks.net" {
+            token = "${{ secrets.TF_TOKEN_CODE_LOGICWORKS_NET }}"
+          }
+          EOF
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
