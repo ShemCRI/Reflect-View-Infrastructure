@@ -13,6 +13,10 @@ on:
           - prod1-rds
           - prod1-alb
           - all
+      confirm:
+        description: 'Type "apply" to confirm'
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -23,9 +27,21 @@ env:
   AWS_REGION: "us-east-1"
 
 jobs:
+  # ---------- confirmation gate ----------
+  confirm-apply:
+    name: "Confirm apply"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate confirmation
+        if: ${{ inputs.confirm != 'apply' }}
+        run: |
+          echo "::error::You must type 'apply' in the confirmation field to proceed."
+          exit 1
+
   # ---------- shared-data ----------
   apply-shared-data:
     name: "Apply: shared-data"
+    needs: [confirm-apply]
     if: ${{ inputs.stack == 'shared-data' || inputs.stack == 'all' }}
     runs-on: ubuntu-latest
     defaults:
@@ -65,9 +81,10 @@ jobs:
   # ---------- prod1-compute ----------
   apply-prod1-compute:
     name: "Apply: prod1-compute"
-    needs: [apply-shared-data]
+    needs: [confirm-apply, apply-shared-data]
     if: |-
       always()
+      && needs.confirm-apply.result == 'success'
       && !failure()
       && (inputs.stack == 'prod1-compute' || inputs.stack == 'all')
     runs-on: ubuntu-latest
@@ -108,9 +125,10 @@ jobs:
   # ---------- prod1-rds ----------
   apply-prod1-rds:
     name: "Apply: prod1-rds"
-    needs: [apply-prod1-compute]
+    needs: [confirm-apply, apply-prod1-compute]
     if: |-
       always()
+      && needs.confirm-apply.result == 'success'
       && !failure()
       && (inputs.stack == 'prod1-rds' || inputs.stack == 'all')
     runs-on: ubuntu-latest
@@ -151,9 +169,10 @@ jobs:
   # ---------- prod1-alb ----------
   apply-prod1-alb:
     name: "Apply: prod1-alb"
-    needs: [apply-prod1-rds]
+    needs: [confirm-apply, apply-prod1-rds]
     if: |-
       always()
+      && needs.confirm-apply.result == 'success'
       && !failure()
       && (inputs.stack == 'prod1-alb' || inputs.stack == 'all')
     runs-on: ubuntu-latest
