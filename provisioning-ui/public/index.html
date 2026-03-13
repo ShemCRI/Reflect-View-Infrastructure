@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>ReflectView Customer Provisioning</title>
+	<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+	<div class="container">
+		<header>
+			<h1>🚀 ReflectView Customer Provisioning</h1>
+			<p>Automated infrastructure provisioning for new customers</p>
+		</header>
+
+		<div class="wizard">
+			<!-- Step 1: Customer Information -->
+			<div class="step active" id="step1">
+				<h2>Step 1: Customer Information</h2>
+				<div class="form-group">
+					<label for="customerName">Customer Name *</label>
+					<input type="text" id="customerName" placeholder="e.g., Acme Corporation" required>
+					<small>Will be sanitized to: <span id="sanitizedName">-</span></small>
+				</div>
+
+				<div class="form-group">
+					<label for="environment">Environment *</label>
+					<select id="environment" required onchange="updateEnvironmentInfo()">
+						<option value="">Select environment...</option>
+					</select>
+					<div id="environmentInfo" class="environment-info" style="display: none;">
+						<div class="info-card">
+							<strong>AWS Account:</strong> <span id="accountId"></span><br>
+							<strong>Region:</strong> <span id="region"></span><br>
+							<strong>Description:</strong> <span id="envDescription"></span><br>
+							<span id="approvalBadge" class="badge"></span>
+						</div>
+					</div>
+				</div>
+
+				<button class="btn btn-primary" onclick="nextStep(2)">Next: EC2 Configuration →</button>
+			</div>
+
+			<!-- Step 2: EC2 Configuration -->
+			<div class="step" id="step2">
+				<h2>Step 2: EC2 Instance Configuration</h2>
+				
+				<div class="form-group">
+					<label for="instanceType">Instance Type *</label>
+					<select id="instanceType" required>
+						<option value="t3.medium">t3.medium (2 vCPU, 4 GB RAM)</option>
+						<option value="t3.large">t3.large (2 vCPU, 8 GB RAM)</option>
+						<option value="t3.xlarge">t3.xlarge (4 vCPU, 16 GB RAM)</option>
+						<option value="m5.large">m5.large (2 vCPU, 8 GB RAM)</option>
+						<option value="m5.xlarge">m5.xlarge (4 vCPU, 16 GB RAM)</option>
+					</select>
+				</div>
+
+				<div class="form-group">
+					<label for="rootEbsSize">Root EBS Size (GB) *</label>
+					<input type="number" id="rootEbsSize" value="80" min="30" max="1000" required>
+				</div>
+
+				<div class="form-group">
+					<label for="subnetId">Subnet ID *</label>
+					<input type="text" id="subnetId" value="subnet-08476614697a4c96b" required>
+					<small>Use RapidScale-approved private subnets only</small>
+				</div>
+
+				<div class="form-group">
+					<label for="amiId">AMI ID *</label>
+					<input type="text" id="amiId" value="ami-0159172a5a821bafd" required>
+					<small>Default: Windows Server 2022</small>
+				</div>
+
+				<div class="button-group">
+					<button class="btn btn-secondary" onclick="prevStep(1)">← Back</button>
+					<button class="btn btn-primary" onclick="nextStep(3)">Next: ALB Configuration →</button>
+				</div>
+			</div>
+
+			<!-- Step 3: ALB Configuration -->
+			<div class="step" id="step3">
+				<h2>Step 3: Application Load Balancer Configuration</h2>
+				
+				<div class="form-group">
+					<label for="hostHeader">Host Header *</label>
+					<input type="text" id="hostHeader" placeholder="customer.hosted.reflectsystems.com" required>
+					<small>DNS name for the customer's application</small>
+				</div>
+
+				<div class="form-group">
+					<label for="backendPort">Backend Port *</label>
+					<input type="number" id="backendPort" value="443" required>
+				</div>
+
+				<div class="form-group">
+					<label for="priority">ALB Rule Priority *</label>
+					<input type="number" id="priority" value="200" min="101" max="50000" required>
+					<small>Must be unique (100 is reserved for YME)</small>
+				</div>
+
+				<div class="button-group">
+					<button class="btn btn-secondary" onclick="prevStep(2)">← Back</button>
+					<button class="btn btn-primary" onclick="nextStep(4)">Next: RDS Configuration →</button>
+				</div>
+			</div>
+
+			<!-- Step 4: RDS Configuration (Optional) -->
+			<div class="step" id="step4">
+				<h2>Step 4: RDS Database Configuration (Optional)</h2>
+				
+				<div class="form-group">
+					<label>
+						<input type="checkbox" id="includeRds" onchange="toggleRdsFields()">
+						Provision dedicated RDS instance for this customer
+					</label>
+				</div>
+
+				<div id="rdsFields" style="display: none;">
+					<div class="form-group">
+						<label for="rdsInstanceClass">RDS Instance Class</label>
+						<select id="rdsInstanceClass">
+							<option value="db.t3.medium">db.t3.medium (2 vCPU, 4 GB RAM)</option>
+							<option value="db.t3.large">db.t3.large (2 vCPU, 8 GB RAM)</option>
+							<option value="db.t3.xlarge">db.t3.xlarge (4 vCPU, 16 GB RAM)</option>
+							<option value="db.t3.2xlarge">db.t3.2xlarge (8 vCPU, 32 GB RAM)</option>
+							<option value="db.m6i.large">db.m6i.large (2 vCPU, 8 GB RAM)</option>
+						</select>
+					</div>
+
+					<div class="form-group">
+						<label for="rdsStorage">Allocated Storage (GB)</label>
+						<input type="number" id="rdsStorage" value="100" min="20" max="1000">
+						<small>Max storage will be 5x this value</small>
+					</div>
+				</div>
+
+				<div class="button-group">
+					<button class="btn btn-secondary" onclick="prevStep(3)">← Back</button>
+					<button class="btn btn-primary" onclick="generateConfig()">Generate Configuration →</button>
+				</div>
+			</div>
+
+			<!-- Step 5: Review & Apply -->
+			<div class="step" id="step5">
+				<h2>Step 5: Review & Apply Configuration</h2>
+				
+				<div class="config-preview">
+					<h3>EC2 Configuration (Compute Stack)</h3>
+					<pre id="ec2ConfigPreview"></pre>
+
+					<h3>ALB Configuration (ALB Stack)</h3>
+					<pre id="albConfigPreview"></pre>
+
+					<div id="rdsConfigSection" style="display: none;">
+						<h3>RDS Configuration (RDS Stack)</h3>
+						<pre id="rdsConfigPreview"></pre>
+					</div>
+				</div>
+
+				<div class="instructions">
+					<h3>📋 Next Steps:</h3>
+					<ol id="instructionsList"></ol>
+				</div>
+
+				<div class="button-group">
+					<button class="btn btn-secondary" onclick="prevStep(4)">← Back</button>
+					<button class="btn btn-success" onclick="copyToClipboard()">📋 Copy All Configurations</button>
+					<button class="btn btn-primary" onclick="createPullRequest()">🔀 Create Pull Request</button>
+				</div>
+
+				<div id="prResult" class="result" style="display: none;"></div>
+				<div id="applyResult" class="result" style="display: none;"></div>
+			</div>
+		</div>
+	</div>
+
+	<script src="app.js"></script>
+</body>
+</html>

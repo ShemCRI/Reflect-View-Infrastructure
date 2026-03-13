@@ -386,6 +386,10 @@ MSBuild_Logs/
 # AWS SAM Build and Temporary Artifacts folder
 .aws-sam
 
+# Provisioning UI artifacts
+provisioning-ui-updated.tar.gz
+provisioning-ui-share.tar.gz
+
 # NVidia Nsight GPU debugger configuration file
 *.nvuser
 

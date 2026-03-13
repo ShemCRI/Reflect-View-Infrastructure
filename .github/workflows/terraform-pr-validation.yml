@@ -1,0 +1,255 @@
+name: Terraform PR Validation
+
+on:
+  pull_request:
+    paths:
+      - 'live/**/terraform.auto.tfvars'
+      - 'live/**/*.tf'
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  detect-changes:
+    name: Detect Changed Environments
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.detect.outputs.environments }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Detect changed environments
+        id: detect
+        run: |
+          # Get list of changed files
+          CHANGED_FILES=$(git diff --name-only origin/main...HEAD | grep -E '^live/[^/]+/(compute|alb|rds)/' || true)
+          
+          # Extract unique environments
+          ENVIRONMENTS=$(echo "$CHANGED_FILES" | cut -d'/' -f2 | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          
+          echo "Changed environments: $ENVIRONMENTS"
+          echo "environments=$ENVIRONMENTS" >> $GITHUB_OUTPUT
+
+  terraform-plan:
+    name: Terraform Plan - ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.environments != '[]'
+    strategy:
+      matrix:
+        environment: ${{ fromJson(needs.detect-changes.outputs.environments) }}
+      fail-fast: false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::530258393729:role/terraform-execute-cri
+          aws-region: us-east-1
+          role-session-name: GitHubActions-TerraformPlan
+      
+      - name: Terraform Plan - Compute Stack
+        id: plan-compute
+        working-directory: live/${{ matrix.environment }}/compute
+        run: |
+          terraform init -backend-config="key=cri-ct-rv-${{ matrix.environment }}/compute/terraform.tfstate"
+          terraform plan -no-color -out=tfplan 2>&1 | tee plan-output.txt
+          
+          # Save plan output for PR comment
+          echo "PLAN_COMPUTE<<EOF" >> $GITHUB_ENV
+          cat plan-output.txt >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+        continue-on-error: true
+      
+      - name: Terraform Plan - ALB Stack
+        id: plan-alb
+        working-directory: live/${{ matrix.environment }}/alb
+        run: |
+          terraform init -backend-config="key=cri-ct-rv-${{ matrix.environment }}/alb/terraform.tfstate"
+          terraform plan -no-color -out=tfplan 2>&1 | tee plan-output.txt
+          
+          echo "PLAN_ALB<<EOF" >> $GITHUB_ENV
+          cat plan-output.txt >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+        continue-on-error: true
+      
+      - name: Terraform Plan - RDS Stack
+        id: plan-rds
+        working-directory: live/${{ matrix.environment }}/rds
+        run: |
+          terraform init -backend-config="key=cri-ct-rv-${{ matrix.environment }}/rds/terraform.tfstate"
+          terraform plan -no-color -out=tfplan 2>&1 | tee plan-output.txt
+          
+          echo "PLAN_RDS<<EOF" >> $GITHUB_ENV
+          cat plan-output.txt >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+        continue-on-error: true
+      
+      - name: Comment PR with Plan Results
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `## Terraform Plan Results - \`${{ matrix.environment }}\`
+            
+            ### Compute Stack
+            <details>
+            <summary>Show Plan</summary>
+            
+            \`\`\`terraform
+            ${{ env.PLAN_COMPUTE }}
+            \`\`\`
+            </details>
+            
+            ### ALB Stack
+            <details>
+            <summary>Show Plan</summary>
+            
+            \`\`\`terraform
+            ${{ env.PLAN_ALB }}
+            \`\`\`
+            </details>
+            
+            ### RDS Stack
+            <details>
+            <summary>Show Plan</summary>
+            
+            \`\`\`terraform
+            ${{ env.PLAN_RDS }}
+            \`\`\`
+            </details>
+            
+            ---
+            **Workflow:** \`${{ github.workflow }}\`
+            **Run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+      
+      - name: Notify Slack on Failure
+        if: failure() && github.event_name == 'pull_request'
+        uses: slackapi/slack-github-action@v1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "❌ Terraform Plan Failed",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "❌ Terraform Plan Failed"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Environment:*\n${{ matrix.environment }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*PR:*\n<${{ github.event.pull_request.html_url }}|#${{ github.event.pull_request.number }}>"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Author:*\n${{ github.event.pull_request.user.login }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Workflow:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run>"
+                    }
+                  ]
+                }
+              ]
+            }
+
+  notify-success:
+    name: Notify Success
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    if: success()
+    steps:
+      - name: Notify Slack
+        uses: slackapi/slack-github-action@v1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "✅ Terraform Plan Successful",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "✅ Terraform Plan Successful"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*PR:*\n<${{ github.event.pull_request.html_url }}|#${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}>"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Author:*\n${{ github.event.pull_request.user.login }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "All Terraform plans completed successfully. Ready for review and approval."
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View PR"
+                      },
+                      "url": "${{ github.event.pull_request.html_url }}"
+                    },
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Workflow"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
